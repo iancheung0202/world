@@ -15,6 +15,7 @@ public class Player implements ActionListener {
     private final SimpleApplication app;
     private final CharacterControl physicsControl;
 
+    private boolean inputEnabled = true;
     private boolean left = false, right = false, up = false, down = false, jump = false;
     private final Vector3f walkDirection = new Vector3f();
 
@@ -64,6 +65,13 @@ public class Player implements ActionListener {
         clearInputs();
     }
 
+    public void setInputEnabled(boolean inputEnabled) {
+        this.inputEnabled = inputEnabled;
+        if (!inputEnabled) {
+            clearInputs();
+        }
+    }
+
     private void clearInputs() {
         left = right = up = down = jump = false;
     }
@@ -100,6 +108,10 @@ public class Player implements ActionListener {
 
     @Override
     public void onAction(String name, boolean isPressed, float tpf) {
+        if (!inputEnabled) {
+            return;
+        }
+
         if (name.equals("Left")) left = isPressed;
         if (name.equals("Right")) right = isPressed;
         if (name.equals("Up")) up = isPressed;

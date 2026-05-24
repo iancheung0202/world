@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "dev.iancheung"
-version = "1.0-SNAPSHOT"
+version = "1.0.0-alpha"
 
 repositories {
     mavenCentral()
@@ -40,9 +40,13 @@ val osName = System.getProperty("os.name").lowercase(Locale.getDefault())
 val isMacOs = osName.contains("mac")
 val isWindows = osName.contains("win")
 val appName = "Mission Control"
-val packageVersion = project.version.toString()
+val releaseVersion = project.version.toString()
+val installerVersion = releaseVersion
     .replace(Regex("[^0-9.]+"), "")
     .ifBlank { "1.0.0" }
+val macPackageIdentifier = "dev.iancheung.missioncontrol"
+val macIconFile = file("src/main/resources/logo.icns")
+val windowsIconFile = file("src/main/resources/logo.ico")
 val jpackageExecutable = file("${System.getProperty("java.home")}/bin/jpackage").absolutePath
 
 fun registerJpackageTask(
@@ -72,7 +76,7 @@ fun registerJpackageTask(
             "--dest", outputDir,
             "--input", inputDir,
             "--name", appName,
-            "--app-version", packageVersion,
+            "--app-version", installerVersion,
             "--main-jar", "${project.name}.jar",
             "--main-class", application.mainClass.get(),
             *extraArguments.toTypedArray()
@@ -85,20 +89,38 @@ registerJpackageTask(
     packageType = "dmg",
     platformName = "macOS",
     isSupportedPlatform = { isMacOs },
-    extraArguments = listOf("--java-options", "-XstartOnFirstThread")
+    extraArguments = buildList {
+        add("--java-options")
+        add("-XstartOnFirstThread")
+        add("--mac-package-identifier")
+        add(macPackageIdentifier)
+        add("--mac-package-name")
+        add(appName)
+        if (macIconFile.exists()) {
+            add("--icon")
+            add(macIconFile.absolutePath)
+        }
+    }
 )
 
 registerJpackageTask(
     taskName = "packageWindows",
     packageType = "msi",
     platformName = "Windows",
-    isSupportedPlatform = { isWindows }
+    isSupportedPlatform = { isWindows },
+    extraArguments = buildList {
+        add("--win-menu")
+        add("--win-shortcut")
+        add("--win-dir-chooser")
+        if (windowsIconFile.exists()) {
+            add("--icon")
+            add(windowsIconFile.absolutePath)
+        }
+    }
 )
 
 tasks.withType<JavaExec> {
-    // Check if the operating system is macOS
     if (System.getProperty("os.name").lowercase(Locale.getDefault()).contains("mac")) {
-        // Force the JVM to run the main method on the first thread
         jvmArgs("-XstartOnFirstThread")
     }
 }

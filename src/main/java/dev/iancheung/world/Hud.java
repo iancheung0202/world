@@ -23,7 +23,10 @@ public class Hud {
     private final Map map;
     private final Player player;
 
+    private final Node hudRoot = new Node("HudRoot");
     private final Node minimapNode = new Node("MinimapPanel");
+
+    private BitmapFont font;
     private BitmapText hudText;
     private BitmapText hudShadowText;
     private BitmapText winText;
@@ -32,53 +35,83 @@ public class Hud {
     private final List<Geometry> minimapTiles = new ArrayList<>();
     private Geometry minimapPlayerMarker;
     private Geometry minimapFacingMarker;
+
     private int currentLevel = 1;
     private int lastScore = 0;
     private int lastTotalCoins = 0;
+    private boolean winScreenVisible = false;
 
     private static final int MINIMAP_RADIUS = 12;
-    private static final float MINIMAP_SCREEN_RATIO = 0.3f;
-    private static final float MINIMAP_MARGIN = 30f;
-    private static final float HUD_TEXT_SIZE = 1.55f;
-    private static final float WIN_TEXT_SIZE = 2.15f;
-    private static final float TEXT_SHADOW_OFFSET = 2.0f;
+    private static final float MINIMAP_RATIO = 0.26f;
+    private static final float MINIMAP_MARGIN_RATIO = 0.022f;
+    private static final float SHADOW_OFFSET = 2.0f;
     private static final float MINIMAP_TILE_Z = 1.0f;
     private static final float PLAYER_MARKER_Z = 2.0f;
     private static final float FACING_MARKER_Z = 3.0f;
-    private float minimapTileSize = 8.0f;
-    private float minimapDiameter = (MINIMAP_RADIUS * 2 + 1) * minimapTileSize;
+
+    private float minimapTileSize;
+    private float minimapDiameter;
+    private float minimapMargin;
 
     public Hud(SimpleApplication app, Map map, Player player) {
         this.app = app;
         this.map = map;
         this.player = player;
 
-        app.getGuiNode().attachChild(minimapNode);
-        initFontsAndTexts();
+        font = app.getAssetManager().loadFont("Interface/Fonts/Default.fnt");
+
+        app.getGuiNode().attachChild(hudRoot);
+        hudRoot.attachChild(minimapNode);
+
+        buildTextElements();
+        computeMinimapMetrics();
     }
 
-    private void initFontsAndTexts() {
-        BitmapFont font = app.getAssetManager().loadFont("Interface/Fonts/Default.fnt");
+    private float scaleFactor() { return Math.min(app.getCamera().getWidth(), app.getCamera().getHeight()) / 720f; }
+    private float hudMargin() { return clamp(18f * scaleFactor(), 16f, 34f); }
+    private float hudFontSize() { return font.getCharSet().getRenderedSize() * 1.45f * scaleFactor(); }
+    private float winFontSize() { return font.getCharSet().getRenderedSize() * 2.10f * scaleFactor(); }
 
-        hudShadowText = new BitmapText(font, false);
-        hudShadowText.setSize(font.getCharSet().getRenderedSize() * HUD_TEXT_SIZE);
-        hudShadowText.setColor(new ColorRGBA(0f, 0f, 0f, 0.8f));
-        hudShadowText.setLocalTranslation(27, app.getCamera().getHeight() - 27, 0);
-        app.getGuiNode().attachChild(hudShadowText);
+    private void buildTextElements() {
+        if (hudShadowText != null) { hudRoot.detachChild(hudShadowText); }
+        if (hudText != null) { hudRoot.detachChild(hudText); }
+        if (winShadowText != null) { hudRoot.detachChild(winShadowText); }
+        if (winText != null) { hudRoot.detachChild(winText); }
 
-        hudText = new BitmapText(font, false);
-        hudText.setSize(font.getCharSet().getRenderedSize() * HUD_TEXT_SIZE);
-        hudText.setColor(ColorRGBA.White);
-        hudText.setLocalTranslation(25, app.getCamera().getHeight() - 29, 0);
-        app.getGuiNode().attachChild(hudText);
+        float m = hudMargin();
+        float sh = app.getCamera().getHeight();
 
-        winShadowText = new BitmapText(font, false);
-        winShadowText.setSize(font.getCharSet().getRenderedSize() * WIN_TEXT_SIZE);
-        winShadowText.setColor(new ColorRGBA(0f, 0f, 0f, 0.8f));
+        hudShadowText = makeBitmapText(hudFontSize(), new ColorRGBA(0f, 0f, 0f, 0.80f), m + SHADOW_OFFSET, sh - m - SHADOW_OFFSET);
+        hudRoot.attachChild(hudShadowText);
 
-        winText = new BitmapText(font, false);
-        winText.setSize(font.getCharSet().getRenderedSize() * WIN_TEXT_SIZE);
-        winText.setColor(new ColorRGBA(1f, 0.95f, 0.65f, 1f));
+        hudText = makeBitmapText(hudFontSize(), ColorRGBA.White, m, sh - m);
+        hudRoot.attachChild(hudText);
+
+        winShadowText = makeBitmapText(winFontSize(), new ColorRGBA(0f, 0f, 0f, 0.80f), 0, 0);
+        winShadowText.setCullHint(Spatial.CullHint.Always);
+        hudRoot.attachChild(winShadowText);
+
+        winText = makeBitmapText(winFontSize(), new ColorRGBA(1f, 0.95f, 0.65f, 1f), 0, 0);
+        winText.setCullHint(Spatial.CullHint.Always);
+        hudRoot.attachChild(winText);
+    }
+
+    private BitmapText makeBitmapText(float size, ColorRGBA color, float x, float y) {
+        BitmapText t = new BitmapText(font, false);
+        t.setSize(size);
+        t.setColor(color);
+        t.setLocalTranslation(x, y, 0);
+        return t;
+    }
+
+    public void setVisible(boolean visible) { hudRoot.setCullHint(visible ? Spatial.CullHint.Inherit : Spatial.CullHint.Always); }
+
+    /** Called by Game whenever the window dimensions change. */
+    public void onResize() {
+        buildTextElements();
+        updateScore(lastScore, lastTotalCoins);
+        computeMinimapMetrics();
+        rebuildMinimapUI();
     }
 
     public void resetHud(int level, int totalCoins) {
@@ -87,104 +120,112 @@ public class Hud {
         lastTotalCoins = totalCoins;
         updateScore(0, totalCoins);
         hudText.setColor(ColorRGBA.White);
-        hudShadowText.setText(hudText.getText());
-        hudShadowText.setColor(new ColorRGBA(0f, 0f, 0f, 0.8f));
+        hudShadowText.setColor(new ColorRGBA(0f, 0f, 0f, 0.80f));
         rebuildMinimapUI();
+        setVisible(true);
     }
 
     public void updateScore(int current, int total) {
         lastScore = current;
         lastTotalCoins = total;
-
-        String text = "LEVEL: " + currentLevel + " | COINS: " + current + " / " + total;
+        hudText.setColor(ColorRGBA.White);
+        hudShadowText.setColor(new ColorRGBA(0f, 0f, 0f, 0.80f));
+        String text = "Coins Collected: " + current + " / " + total + " (Level " + currentLevel + ")";
         hudText.setText(text);
         hudShadowText.setText(text);
-        hudShadowText.setLocalTranslation(hudText.getLocalTranslation().x + TEXT_SHADOW_OFFSET, hudText.getLocalTranslation().y - TEXT_SHADOW_OFFSET, 0);
+        syncShadow(hudText, hudShadowText);
     }
 
     public void showWarning(String warning) {
-        hudText.setColor(new ColorRGBA(1f, 0.3f, 0.2f, 1f));
-        hudShadowText.setColor(new ColorRGBA(0f, 0f, 0f, 0.8f));
+        hudText.setColor(new ColorRGBA(1f, 0.30f, 0.20f, 1f));
+        hudShadowText.setColor(new ColorRGBA(0f, 0f, 0f, 0.80f));
         hudText.setText(warning);
         hudShadowText.setText(warning);
+        syncShadow(hudText, hudShadowText);
     }
 
     public void clearWarning() {
-        hudText.setColor(ColorRGBA.White);
         updateScore(lastScore, lastTotalCoins);
     }
 
     public void showWinScreen(int countdown) {
         minimapNode.setCullHint(Spatial.CullHint.Always);
-        String text = "ZONE CLEARED!\nNext level ready in " + countdown + "s...";
+
+        String text = "ZONE CLEARED!\nNext level in " + countdown + "s";
         winText.setText(text);
         winShadowText.setText(text);
 
-        float x = (app.getCamera().getWidth() / 2f) - (winText.getLineWidth() / 2f);
-        float y = (app.getCamera().getHeight() / 2f) + (winText.getLineHeight() / 2f);
+        float sw = app.getCamera().getWidth();
+        float sh = app.getCamera().getHeight();
+        float x = (sw - winText.getLineWidth()) / 2f;
+        float y = (sh / 2f) + winText.getLineHeight();
         winText.setLocalTranslation(x, y, 0);
-        winShadowText.setLocalTranslation(x + TEXT_SHADOW_OFFSET, y - TEXT_SHADOW_OFFSET, 0);
+        winShadowText.setLocalTranslation(x + SHADOW_OFFSET, y - SHADOW_OFFSET, 0);
 
-        if (winShadowText.getParent() == null) {
-            app.getGuiNode().attachChild(winShadowText);
-        }
-        if (winText.getParent() == null) {
-            app.getGuiNode().attachChild(winText);
+        if (!winScreenVisible) {
+            winText.setCullHint(Spatial.CullHint.Inherit);
+            winShadowText.setCullHint(Spatial.CullHint.Inherit);
+            winScreenVisible = true;
         }
     }
 
     public void hideWinScreen() {
-        app.getGuiNode().detachChild(winText);
-        app.getGuiNode().detachChild(winShadowText);
-        minimapNode.setCullHint(Spatial.CullHint.Never);
+        winText.setCullHint(Spatial.CullHint.Always);
+        winShadowText.setCullHint(Spatial.CullHint.Always);
+        winScreenVisible = false;
+        minimapNode.setCullHint(Spatial.CullHint.Inherit);
+    }
+
+    private void computeMinimapMetrics() {
+        float minDim = Math.min(app.getCamera().getWidth(), app.getCamera().getHeight());
+        minimapDiameter = minDim * MINIMAP_RATIO;
+        minimapTileSize = minimapDiameter / getMinimapStride();
+        minimapMargin = clamp(minDim * MINIMAP_MARGIN_RATIO * 1.1f, 16f, 42f);
     }
 
     private void rebuildMinimapUI() {
         minimapNode.detachAllChildren();
         minimapTiles.clear();
 
-        refreshMinimapMetrics();
-        float startX = getMinimapOriginX();
-        float startY = getMinimapOriginY();
+        float startX = minimapOriginX();
+        float startY = minimapOriginY();
+        float pad = minimapTileSize * 0.4f;
 
-        Quad bgQuad = new Quad(minimapDiameter + 10f, minimapDiameter + 10f);
-        Geometry bg = new Geometry("MinimapBG", bgQuad);
-        Material bgMat = new Material(app.getAssetManager(), "Common/MatDefs/Misc/Unshaded.j3md");
-        bgMat.setColor("Color", new ColorRGBA(0.05f, 0.05f, 0.08f, 0.6f));
-        bgMat.getAdditionalRenderState().setBlendMode(BlendMode.Alpha);
-        bg.setMaterial(bgMat);
-        bg.setLocalTranslation(startX - 5f, startY - 5f, 0);
+        Geometry bg = makeColoredQuad("MinimapBG",
+                minimapDiameter + pad * 2f, minimapDiameter + pad * 2f,
+                new ColorRGBA(0.03f, 0.03f, 0.06f, 0.70f),
+                startX - pad, startY - pad, 0f);
         minimapNode.attachChild(bg);
 
         int stride = getMinimapStride();
         for (int i = 0; i < stride; i++) {
             for (int j = 0; j < stride; j++) {
-                Quad q = new Quad(minimapTileSize, minimapTileSize);
-                Geometry tile = new Geometry("MapTile_" + i + "_" + j, q);
-                Material m = new Material(app.getAssetManager(), "Common/MatDefs/Misc/Unshaded.j3md");
-                m.getAdditionalRenderState().setBlendMode(BlendMode.Alpha);
-                tile.setMaterial(m);
-                tile.setLocalTranslation(startX + (i * minimapTileSize), startY + (j * minimapTileSize), MINIMAP_TILE_Z);
+                Geometry tile = makeColoredQuad("MapTile_" + i + "_" + j,
+                        minimapTileSize, minimapTileSize,
+                        new ColorRGBA(0.12f, 0.12f, 0.14f, 1f),
+                        startX + i * minimapTileSize,
+                        startY + j * minimapTileSize,
+                        MINIMAP_TILE_Z);
                 minimapNode.attachChild(tile);
                 minimapTiles.add(tile);
             }
         }
 
-        Quad pQ = new Quad(minimapTileSize * 0.72f, minimapTileSize * 0.72f);
-        minimapPlayerMarker = new Geometry("PlayerMarker", pQ);
-        Material pMat = new Material(app.getAssetManager(), "Common/MatDefs/Misc/Unshaded.j3md");
-        pMat.setColor("Color", new ColorRGBA(0.97f, 0.97f, 0.98f, 0.95f));
-        minimapPlayerMarker.setMaterial(pMat);
-        minimapPlayerMarker.setLocalTranslation(startX + (MINIMAP_RADIUS * minimapTileSize) + (minimapTileSize * 0.14f), startY + (MINIMAP_RADIUS * minimapTileSize) + (minimapTileSize * 0.14f), PLAYER_MARKER_Z);
+        float pm = minimapTileSize * 0.72f;
+        minimapPlayerMarker = makeColoredQuad("PlayerMarker", pm, pm,
+                new ColorRGBA(0.97f, 0.97f, 0.98f, 0.95f),
+                startX + MINIMAP_RADIUS * minimapTileSize + (minimapTileSize - pm) / 2f,
+                startY + MINIMAP_RADIUS * minimapTileSize + (minimapTileSize - pm) / 2f,
+                PLAYER_MARKER_Z);
         minimapNode.attachChild(minimapPlayerMarker);
 
-        Quad fQ = new Quad(minimapTileSize * 0.42f, minimapTileSize * 0.42f);
-        minimapFacingMarker = new Geometry("FacingMarker", fQ);
-        Material fMat = new Material(app.getAssetManager(), "Common/MatDefs/Misc/Unshaded.j3md");
-        fMat.setColor("Color", new ColorRGBA(1f, 0.9f, 0.15f, 1f));
-        fMat.getAdditionalRenderState().setBlendMode(BlendMode.Alpha);
-        minimapFacingMarker.setMaterial(fMat);
-        minimapFacingMarker.setLocalTranslation(startX + (MINIMAP_RADIUS * minimapTileSize) + (minimapTileSize * 0.29f), startY + (MINIMAP_RADIUS * minimapTileSize) + (minimapTileSize * 0.29f), FACING_MARKER_Z);
+        float fm = minimapTileSize * 0.42f;
+        minimapFacingMarker = makeColoredQuad("FacingMarker", fm, fm,
+                new ColorRGBA(1f, 0.9f, 0.15f, 1f),
+                startX + MINIMAP_RADIUS * minimapTileSize + (minimapTileSize - fm) / 2f,
+                startY + MINIMAP_RADIUS * minimapTileSize + (minimapTileSize - fm) / 2f,
+                FACING_MARKER_Z);
+        minimapFacingMarker.getMaterial().getAdditionalRenderState().setBlendMode(BlendMode.Alpha);
         minimapNode.attachChild(minimapFacingMarker);
     }
 
@@ -201,12 +242,14 @@ public class Hud {
         List<Vector2f> activeCoins = new ArrayList<>();
         for (Spatial child : map.getCoinNode().getChildren()) {
             Vector3f cPos = child.getLocalTranslation();
-            activeCoins.add(new Vector2f(Math.round(cPos.x / Map.TILE_SIZE), Math.round(cPos.z / Map.TILE_SIZE)));
+            activeCoins.add(new Vector2f(
+                    Math.round(cPos.x / Map.TILE_SIZE),
+                    Math.round(cPos.z / Map.TILE_SIZE)));
         }
 
         int stride = getMinimapStride();
-        int originX = clampVisibleOrigin(pGridX, stride, map.getGridWidth());
-        int originY = clampVisibleOrigin(pGridY, stride, map.getGridHeight());
+        int originX = clampOrigin(pGridX, stride, map.getGridWidth());
+        int originY = clampOrigin(pGridY, stride, map.getGridHeight());
 
         for (int i = 0; i < stride; i++) {
             for (int j = 0; j < stride; j++) {
@@ -220,71 +263,62 @@ public class Hud {
                 if (worldX == exitX && worldY == exitY) {
                     mat.setColor("Color", new ColorRGBA(0.15f, 0.9f, 0.3f, 1f));
                 } else {
-                    final int wx = worldX;
-                    final int wy = worldY;
+                    final int wx = worldX, wy = worldY;
                     boolean hasCoin = activeCoins.stream().anyMatch(c -> (int) c.x == wx && (int) c.y == wy);
-
                     if (hasCoin) {
                         mat.setColor("Color", new ColorRGBA(0.35f, 0.9f, 1f, 1f));
                     } else {
                         byte cell = map.getWorldGrid()[worldX][worldY];
-                        mat.setColor("Color", cell == 1 ? new ColorRGBA(0.3f, 0.3f, 0.35f, 0.95f) : new ColorRGBA(0.12f, 0.12f, 0.14f, 1f));
+                        mat.setColor("Color", cell == 1
+                                ? new ColorRGBA(0.3f, 0.3f, 0.35f, 0.95f)
+                                : new ColorRGBA(0.12f, 0.12f, 0.14f, 1f));
                     }
                 }
             }
         }
 
-        float playerTileX = clampToGrid((stride - 1) - (pGridX - originX), stride);
-        float playerTileY = clampToGrid(pGridY - originY, stride);
+        float playerTileX = clampGrid((stride - 1) - (pGridX - originX), stride);
+        float playerTileY = clampGrid(pGridY - originY, stride);
+        float ox = minimapOriginX();
+        float oy = minimapOriginY();
 
-        float playerMarkerX = getMinimapOriginX() + (playerTileX * minimapTileSize) + (minimapTileSize * 0.14f);
-        float playerMarkerY = getMinimapOriginY() + (playerTileY * minimapTileSize) + (minimapTileSize * 0.14f);
-        minimapPlayerMarker.setLocalTranslation(playerMarkerX, playerMarkerY, PLAYER_MARKER_Z);
+        float pm = minimapTileSize * 0.72f;
+        float markerX = ox + playerTileX * minimapTileSize + (minimapTileSize - pm) / 2f;
+        float markerY = oy + playerTileY * minimapTileSize + (minimapTileSize - pm) / 2f;
+        minimapPlayerMarker.setLocalTranslation(markerX, markerY, PLAYER_MARKER_Z);
 
         Vector3f dir = app.getCamera().getDirection();
         float angle = FastMath.atan2(dir.z, -dir.x);
-
-        float facingOffset = minimapTileSize * 0.55f;
-        float facingX = playerMarkerX + (FastMath.cos(angle) * facingOffset);
-        float facingY = playerMarkerY + (FastMath.sin(angle) * facingOffset);
-
+        float facingDist = minimapTileSize * 0.58f;
+        float fm = minimapTileSize * 0.42f;
+        float facingX = markerX + pm / 2f - fm / 2f + FastMath.cos(angle) * facingDist;
+        float facingY = markerY + pm / 2f - fm / 2f + FastMath.sin(angle) * facingDist;
         minimapFacingMarker.setLocalTranslation(facingX, facingY, FACING_MARKER_Z);
-
-        minimapFacingMarker.getMaterial().setColor("Color", new ColorRGBA(1f, 0.9f, 0.15f, 1f));
     }
 
-    private int clampVisibleOrigin(int playerGrid, int stride, int worldSize) {
-        int maxOrigin = Math.max(0, worldSize - stride);
-        return Math.max(0, Math.min(playerGrid - MINIMAP_RADIUS, maxOrigin));
+    private void syncShadow(BitmapText src, BitmapText shadow) {
+        Vector3f p = src.getLocalTranslation();
+        shadow.setLocalTranslation(p.x + SHADOW_OFFSET, p.y - SHADOW_OFFSET, 0);
     }
 
-    private float clampToGrid(int value, int stride) {
-        return Math.max(0, Math.min(value, stride - 1));
+    private Geometry makeColoredQuad(String name, float w, float h, ColorRGBA color, float x, float y, float z) {
+        Geometry g = new Geometry(name, new Quad(w, h));
+        Material m = new Material(app.getAssetManager(), "Common/MatDefs/Misc/Unshaded.j3md");
+        m.setColor("Color", color);
+        m.getAdditionalRenderState().setBlendMode(BlendMode.Alpha);
+        g.setMaterial(m);
+        g.setLocalTranslation(x, y, z);
+        return g;
     }
 
-    private float getMinimapOriginX() {
-        return app.getCamera().getWidth() - minimapDiameter - MINIMAP_MARGIN;
-    }
-
-    private float getMinimapOriginY() {
-        return app.getCamera().getHeight() - minimapDiameter - MINIMAP_MARGIN;
-    }
-
-    private void refreshMinimapMetrics() {
-        float availableSize = Math.min(app.getCamera().getWidth(), app.getCamera().getHeight()) * MINIMAP_SCREEN_RATIO;
-        minimapDiameter = availableSize;
-        minimapTileSize = minimapDiameter / getMinimapStride();
-    }
-
-    private int getMinimapStride() {
-        return MINIMAP_RADIUS * 2 + 1;
-    }
+    private int  getMinimapStride() { return MINIMAP_RADIUS * 2 + 1; }
+    private float minimapOriginX() { return app.getCamera().getWidth()  - minimapDiameter - minimapMargin; }
+    private float minimapOriginY() { return app.getCamera().getHeight() - minimapDiameter - minimapMargin; }
+    private int  clampOrigin(int v, int stride, int worldSz) { return Math.max(0, Math.min(v - MINIMAP_RADIUS, worldSz - stride)); }
+    private float clampGrid(int v, int stride) { return Math.max(0, Math.min(v, stride - 1)); }
+    private float clamp(float value, float min, float max) { return Math.max(min, Math.min(value, max)); }
 
     public void cleanup() {
-        app.getGuiNode().detachChild(minimapNode);
-        app.getGuiNode().detachChild(hudShadowText);
-        app.getGuiNode().detachChild(hudText);
-        app.getGuiNode().detachChild(winShadowText);
-        if (winText.getParent() != null) app.getGuiNode().detachChild(winText);
+        app.getGuiNode().detachChild(hudRoot);
     }
 }
